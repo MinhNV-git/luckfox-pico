@@ -5,6 +5,7 @@ ifeq ($(RK_PROJECT_OUTPUT),)
 -include $(MAKE_PARAM_DIR)/../../.BoardConfig.mk
 RK_PROJECT_OUTPUT:=$(MAKE_PARAM_DIR)/../../output/out
 RK_PROJECT_PATH_MEDIA:=$(RK_PROJECT_OUTPUT)/media_out
+RK_PROJECT_PATH_APP:=$(RK_PROJECT_OUTPUT)/app_out
 endif
 ifneq ($(RK_PROJECT_OUTPUT),)
 RK_APP_PATH_LIB_INCLUDE := $(RK_PROJECT_PATH_MEDIA)
@@ -218,3 +219,4 @@ export RK_APP_OPTS
 
 export RK_APP_CHIP
 export RK_APP_OUTPUT
+export RK_PROJECT_PATH_APP
