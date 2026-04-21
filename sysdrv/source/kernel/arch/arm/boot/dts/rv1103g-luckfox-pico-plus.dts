@@ -60,12 +60,29 @@
 /**********SPI**********/
 /* SPI0_M0 */
 &spi0 {
-	status = "disabled";
-	spidev@0 {
-		spi-max-frequency = <50000000>;
-	};
-	fbtft@0 {
-		spi-max-frequency = <50000000>;
+	status = "okay";
+	
+	// spidev@0 {
+	// 	spi-max-frequency = <50000000>;
+	// 	status = "disabled";
+	// };
+	// fbtft@0 {
+	// 	spi-max-frequency = <50000000>;
+	// 	status = "disabled";
+	// };
+
+	icm20602: icm20602@0 {
+		compatible = "invensense,icm20602";
+		status = "okay";
+		reg = <0>;
+		spi-max-frequency = <10000000>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&gpio0_a4_irq>;
+		interrupt-parent = <&gpio0>;
+        interrupts = <RK_PA4 IRQ_TYPE_LEVEL_LOW>;
+		mount-matrix = "1",  "0",  "0",
+		               "0",  "1",  "0",
+		               "0",  "0",  "1";
 	};
 };
 
