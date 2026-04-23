@@ -8,7 +8,7 @@ export LF_ORIGIN_BOARD_CONFIG=BoardConfig-SPI_NAND-Buildroot-RV1103_Luckfox_Pico
 export RK_CHIP=rv1106
 
 # app config
-# export RK_APP_TYPE=RKIPC_RV1103
+export RK_APP_TYPE=RKIPC_RV1103
 
 # Config CMA size in environment
 export RK_BOOTARGS_CMA_SIZE="24M"
