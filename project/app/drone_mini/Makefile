@@ -11,8 +11,8 @@ CURRENT_DIR := $(shell pwd)
 PKG_NAME := drone_mini
 PKG_BIN ?= out
 
-SRC := $(wildcard *.c) $(wildcard imu/*.c)
-CFLAGS := -I include
+SRC := $(wildcard *.c) $(wildcard imu/*.c) $(wildcard tools/*.c)
+CFLAGS := -I include -pthread
 
 all:
 	rm -rf $(PKG_BIN); \
