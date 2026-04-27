@@ -79,7 +79,7 @@
 		pinctrl-names = "default";
 		pinctrl-0 = <&gpio0_a4_irq>;
 		interrupt-parent = <&gpio0>;
-        interrupts = <RK_PA4 IRQ_TYPE_LEVEL_LOW>;
+        interrupts = <RK_PA4 IRQ_TYPE_EDGE_FALLING>;
 		mount-matrix = "1",  "0",  "0",
 		               "0",  "1",  "0",
 		               "0",  "0",  "1";
