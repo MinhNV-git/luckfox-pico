@@ -4,6 +4,7 @@
 #include <unistd.h>
 #include "calibapp.h"
 #include "imu.h"
+#include "main.h"
 
 S_IMU_DATA imu_data = {
     .accel_x = 0,
@@ -72,14 +73,17 @@ static void simulate_imu_data(void)
 
 int main(void) {
     printf("Drone Mini starting...\n");
-    // init_imu();
-    // read_imu_data();
-    // printf("Drone Mini running\n");
+    init_imu();
+#ifdef CALIBAPP_ENABLE
     calibapp_init();
+#endif
 
+    //main loop
     for (;;) {
-        simulate_imu_data();
+#ifdef CALIBAPP_ENABLE
+        imu_read_sample(&imu_data);
         calibapp_transfer_data((const uint8_t *)&imu_data, sizeof(imu_data));
+#endif
         usleep(CALIBAPP_PERIODIC_UPDATED * 1000 / 2);
     }
 

@@ -49,13 +49,14 @@ DEFAULT_FIELDS = [
     "gyro_x",
     "gyro_y",
     "gyro_z",
+    "temp",
 ]
 DEFAULT_HEADER = 0xAA
 DEFAULT_PERIOD_MS = 10
 DEFAULT_REQUEST_BYTE = b"A"
 CRC_SIZE = 2
 FRAME_OVERHEAD = 4
-IMU_STRUCT = struct.Struct("<hhhhhh")
+IMU_STRUCT = struct.Struct("<hhhhhhh")
 DEFAULT_PORT = "/dev/ttyUSB0"
 UI_REFRESH_MS = 42
 MAX_LOG_LINES = 300
