@@ -1,4 +1,6 @@
 #include "imu.h"
+#include "main.h"
+#include "filter.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -11,22 +13,12 @@
 #define IMU_DEVICE_NODE_PATH "/dev/iio:device1"
 #define IMU_BUFFER_PATH IMU_IIO_DEVICE_PATH "/buffer"
 #define IMU_SCAN_ELEMENTS_PATH IMU_IIO_DEVICE_PATH "/scan_elements"
+#define IMU_ACCEL_SCALE_PATH IMU_IIO_DEVICE_PATH "/in_accel_scale"
+#define IMU_GYRO_SCALE_PATH IMU_IIO_DEVICE_PATH "/in_anglvel_scale"
 
-#define IMU_DEFAULT_SAMPLING_FREQUENCY_HZ 100
+#define IMU_DEFAULT_SAMPLING_FREQUENCY_HZ IMU_SAMPLE_RATE
 #define IMU_DEFAULT_BUFFER_LENGTH 32
 #define IMU_MAX_FRAME_SIZE 64
-
-typedef enum {
-    IMU_FIELD_ACCEL_X = 0,
-    IMU_FIELD_ACCEL_Y,
-    IMU_FIELD_ACCEL_Z,
-    IMU_FIELD_GYRO_X,
-    IMU_FIELD_GYRO_Y,
-    IMU_FIELD_GYRO_Z,
-    IMU_FIELD_TEMP,
-    IMU_FIELD_COUNT
-} ImuFieldId;
-
 typedef struct {
     const char *enable_name;
     const char *index_name;
@@ -65,6 +57,11 @@ static ImuState g_imu_state = {
     .setup_done = 0
 };
 
+static S_IMU_SCALE imu_scale = {
+    .accel_scale = 0.0f,
+    .gyro_scale = 0.0f
+};
+
 static int imu_path_exists(const char *path)
 {
     return access(path, F_OK) == 0;
@@ -87,6 +84,31 @@ static int imu_read_int(const char *path, int *value)
 
     if (fscanf(file, "%d", value) != 1) {
         fprintf(stderr, "%s: failed to parse integer from %s\n", __func__, path);
+        fclose(file);
+        return -1;
+    }
+
+    fclose(file);
+    return 0;
+}
+
+static float imu_read_float(const char *path, float *value)
+{
+    FILE *file;
+
+    if (value == NULL) {
+        errno = EINVAL;
+        return -1;
+    }
+
+    file = fopen(path, "r");
+    if (file == NULL) {
+        fprintf(stderr, "%s: fopen(%s) failed: %s\n", __func__, path, strerror(errno));
+        return -1;
+    }
+
+    if (fscanf(file, "%f", value) != 1) {
+        fprintf(stderr, "%s: failed to parse float from %s\n", __func__, path);
         fclose(file);
         return -1;
     }
@@ -313,22 +335,22 @@ static void imu_assign_value(S_IMU_DATA *imu_data, ImuFieldId field_id, int32_t 
 
     switch (field_id) {
         case IMU_FIELD_ACCEL_X:
-            imu_data->accel_x = sample_value;
+            imu_data->accel_x = sample_value - IMU_ACCEL_RAW_X_OFFSET;
             break;
         case IMU_FIELD_ACCEL_Y:
-            imu_data->accel_y = sample_value;
+            imu_data->accel_y = sample_value - IMU_ACCEL_RAW_Y_OFFSET;
             break;
         case IMU_FIELD_ACCEL_Z:
-            imu_data->accel_z = sample_value;
+            imu_data->accel_z = sample_value - IMU_ACCEL_RAW_Z_OFFSET;
             break;
         case IMU_FIELD_GYRO_X:
-            imu_data->gyro_x = sample_value;
+            imu_data->gyro_x = sample_value - IMU_GYRO_RAW_X_OFFSET;
             break;
         case IMU_FIELD_GYRO_Y:
-            imu_data->gyro_y = sample_value;
+            imu_data->gyro_y = sample_value - IMU_GYRO_RAW_Y_OFFSET;
             break;
         case IMU_FIELD_GYRO_Z:
-            imu_data->gyro_z = sample_value;
+            imu_data->gyro_z = sample_value - IMU_GYRO_RAW_Z_OFFSET;
             break;
         case IMU_FIELD_TEMP:
             imu_data->temp = sample_value;
@@ -336,6 +358,29 @@ static void imu_assign_value(S_IMU_DATA *imu_data, ImuFieldId field_id, int32_t 
         default:
             break;
     }
+}
+
+void imu_scale_configure(void)
+{
+    float accel_scale = 0.0f;
+    float gyro_scale = 0.0f;
+    int status;
+
+    status = imu_read_float(IMU_ACCEL_SCALE_PATH, &accel_scale);
+    if (status != 0) {
+        fprintf(stderr, "%s: failed to read accelerometer scale from %s\n", __func__, IMU_ACCEL_SCALE_PATH);
+        return;
+    }
+
+    status = imu_read_float(IMU_GYRO_SCALE_PATH, &gyro_scale);
+    if (status != 0) {
+        fprintf(stderr, "%s: failed to read gyroscope scale from %s\n", __func__, IMU_GYRO_SCALE_PATH);
+        return;
+    }
+
+    imu_scale.accel_scale = accel_scale;
+    imu_scale.gyro_scale = gyro_scale;
+    printf("IMU scale values configured: accel_scale=%.f, gyro_scale=%.f\n", accel_scale, gyro_scale);
 }
 
 int imu_setup(void)
@@ -428,10 +473,12 @@ int imu_setup(void)
                g_imu_scan_channels[i].storage_bytes);
     }
 
+    imu_scale_configure();
+
     return 0;
 }
 
-int imu_read_sample(S_IMU_DATA *imu_data)
+int imu_read_raw(S_IMU_DATA *imu_data)
 {
     uint8_t frame[IMU_MAX_FRAME_SIZE];
     ssize_t bytes_read;
@@ -475,25 +522,64 @@ int imu_read_sample(S_IMU_DATA *imu_data)
     return 0;
 }
 
+/* Low Pass Filter Apply*/
+LpfFilter imu_lpf_filters[IMU_FIELD_COUNT];
+static void imu_LPF_setup(void)
+{
+    S_IMU_DATA _data, _temp;
+    int16_t *p;
+    LpfConfig config[6] = {
+        {.cutoff_freq_hz = IMU_ACCEL_X_LPF_FREQ_CUTOFF_HZ,.sample_rate_hz = IMU_ACCEL_X_LPF_FREQ_SAMPLING_HZ},
+        {.cutoff_freq_hz = IMU_ACCEL_Y_LPF_FREQ_CUTOFF_HZ,.sample_rate_hz = IMU_ACCEL_Y_LPF_FREQ_SAMPLING_HZ},
+        {.cutoff_freq_hz = IMU_ACCEL_Z_LPF_FREQ_CUTOFF_HZ,.sample_rate_hz = IMU_ACCEL_Z_LPF_FREQ_SAMPLING_HZ},
+        {.cutoff_freq_hz = IMU_GYRO_X_LPF_FREQ_CUTOFF_HZ,.sample_rate_hz = IMU_GYRO_X_LPF_FREQ_SAMPLING_HZ},
+        {.cutoff_freq_hz = IMU_GYRO_Y_LPF_FREQ_CUTOFF_HZ,.sample_rate_hz = IMU_GYRO_Y_LPF_FREQ_SAMPLING_HZ},
+        {.cutoff_freq_hz = IMU_GYRO_Z_LPF_FREQ_CUTOFF_HZ,.sample_rate_hz = IMU_GYRO_Z_LPF_FREQ_SAMPLING_HZ}
+    };
+
+    imu_read_raw(&_data);
+    imu_read_raw(&_temp);
+    for (size_t i = 0; i < 100; i++)
+    {
+        imu_read_raw(&_temp);
+        _data.accel_x = (_data.accel_x + _temp.accel_x)/2;
+        _data.accel_y = (_data.accel_y + _temp.accel_y)/2;
+        _data.accel_z = (_data.accel_z + _temp.accel_z)/2;
+        _data.gyro_x = (_data.gyro_x + _temp.gyro_x)/2;
+        _data.gyro_y = (_data.gyro_y + _temp.gyro_y)/2;
+        _data.gyro_z = (_data.gyro_z + _temp.gyro_z)/2;
+    }
+    p=(int16_t *)&_data;    
+    for (int i = 0; i < 6; ++i) {
+        // printf("Initializing LPF for %s with cutoff: %d; sample_rate: %d\n", g_imu_scan_channels[i].label, config[i].cutoff_freq_hz, config[i].sample_rate_hz);
+        lpf_create(&config[i], &imu_lpf_filters[i]);
+        lpf_init_value(&imu_lpf_filters[i], *(p+i));
+    }
+    printf("LPF: alpha values: accel_x=%.9f, accel_y=%.9f, accel_z=%.9f, gyro_x=%.4f, gyro_y=%.4f, gyro_z=%.4f\n",
+           (float)imu_lpf_filters[IMU_FIELD_ACCEL_X].state.alpha_fixed / 32768.0f,
+           (float)imu_lpf_filters[IMU_FIELD_ACCEL_Y].state.alpha_fixed / 32768.0f,
+           (float)imu_lpf_filters[IMU_FIELD_ACCEL_Z].state.alpha_fixed / 32768.0f,
+           (float)imu_lpf_filters[IMU_FIELD_GYRO_X].state.alpha_fixed / 32768.0f,
+           (float)imu_lpf_filters[IMU_FIELD_GYRO_Y].state.alpha_fixed / 32768.0f,
+           (float)imu_lpf_filters[IMU_FIELD_GYRO_Z].state.alpha_fixed / 32768.0f);
+}
+/* LPF end */
+
+int imu_read_raw_LPF(S_IMU_DATA *imu_data)
+{
+    imu_read_raw(imu_data);
+    imu_data->accel_x = lpf_apply(&imu_lpf_filters[IMU_FIELD_ACCEL_X], imu_data->accel_x);
+    imu_data->accel_y = lpf_apply(&imu_lpf_filters[IMU_FIELD_ACCEL_Y], imu_data->accel_y);
+    imu_data->accel_z = lpf_apply(&imu_lpf_filters[IMU_FIELD_ACCEL_Z], imu_data->accel_z);
+    imu_data->gyro_x = lpf_apply(&imu_lpf_filters[IMU_FIELD_GYRO_X], imu_data->gyro_x);
+    imu_data->gyro_y = lpf_apply(&imu_lpf_filters[IMU_FIELD_GYRO_Y], imu_data->gyro_y);
+    imu_data->gyro_z = lpf_apply(&imu_lpf_filters[IMU_FIELD_GYRO_Z], imu_data->gyro_z);
+    return 0;   
+}
+
 void init_imu(void)
 {
     (void)imu_setup();
+    imu_LPF_setup();
 }
 
-void read_imu_data(void)
-{
-    S_IMU_DATA imu_data;
-
-    if (imu_read_sample(&imu_data) != 0) {
-        return;
-    }
-
-    printf("IMU sample: acc=(%d,%d,%d) gyro=(%d,%d,%d) temp=%d\n",
-           imu_data.accel_x,
-           imu_data.accel_y,
-           imu_data.accel_z,
-           imu_data.gyro_x,
-           imu_data.gyro_y,
-           imu_data.gyro_z,
-           imu_data.temp);
-}

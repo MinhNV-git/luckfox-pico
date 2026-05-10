@@ -5,6 +5,7 @@
 #include "calibapp.h"
 #include "imu.h"
 #include "main.h"
+#include "filter.h"
 
 S_IMU_DATA imu_data = {
     .accel_x = 0,
@@ -81,7 +82,8 @@ int main(void) {
     //main loop
     for (;;) {
 #ifdef CALIBAPP_ENABLE
-        imu_read_sample(&imu_data);
+        imu_read_raw_LPF(&imu_data);
+        // imu_data.accel_y = lpf_apply(&imu_lpf_filters[IMU_FIELD_ACCEL_X], imu_data.accel_x);
         calibapp_transfer_data((const uint8_t *)&imu_data, sizeof(imu_data));
 #endif
         usleep(CALIBAPP_PERIODIC_UPDATED * 1000 / 2);

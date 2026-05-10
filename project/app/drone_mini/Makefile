@@ -12,7 +12,7 @@ PKG_NAME := drone_mini
 PKG_BIN ?= out
 
 SRC := $(wildcard *.c) $(wildcard imu/*.c) $(wildcard tools/*.c)
-CFLAGS := -I include -pthread
+CFLAGS := -I include -pthread -lm
 
 all:
 	rm -rf $(PKG_BIN); \
